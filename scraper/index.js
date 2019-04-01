@@ -11,11 +11,16 @@ function parsePage(html) {
   }).get();
   const perPage = result.length;
 
+  if (!perPage)
+    return result;
+
   let {
     text,
     link
   } = result[result.length - 1];
   let num = +extractNum(text);
+
+  if (!num) return result;
 
   for (let i = num - 1; i > 0; i--) {
     let newText = text.replace(/(\d+)$/, i < 10 ? String(i).padStart(2, '0') : String(i));
@@ -30,7 +35,8 @@ function parsePage(html) {
 }
 
 function extractNum(string) {
-  return string.match(/(\d+)/g).shift();
+  const match = string.match(/(\d+)/g);
+  return match ? match.shift() : null;
 }
 
 module.exports = {

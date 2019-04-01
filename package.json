@@ -1,6 +1,6 @@
 {
   "name": "o2tv-dl",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "cli tool to download series from O2TvSeries.com",
   "main": "index.js",
   "author": "(https://jnafolayan.github.io)",
