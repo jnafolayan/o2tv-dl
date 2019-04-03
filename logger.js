@@ -10,11 +10,13 @@ const colors = {
 const info = makeLog('info');
 const warn = makeLog('warning');
 const error = makeLog('error');
+const success = makeLog('success');
 
 module.exports = {
   info,
   warn,
-  error
+  error,
+  success
 };
 
 function makeLog(type) {

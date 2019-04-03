@@ -8,6 +8,7 @@ const {
 
 const program = require('commander');
 const axios = require('axios');
+const httpAdapter = require('axios/lib/adapters/http');
 const inquirer = require('inquirer');
 const chalk = require('chalk');
 const ProgressBar = require('progress');
@@ -26,7 +27,7 @@ program
   .usage('[options] <series>')
   .description('search for movies with the specified tags')
   .option('-t, --timeout [timeout]', 'how long can a request take', 60)
-  .option('-f, --format [format]', 'the video format (mp4, mp3, HD)', 'mp4')
+  .option('-f, --format [format]', 'the video format (3gp, mp4, HD)', 'mp4')
   .action(function search(series, options) {
     if (!options) {
       options = series;
@@ -305,10 +306,9 @@ function downloadEpisode({
 
   const seasonNum = extractNum(season);
   const episodeNum = extractNum(episode);
+  const sites = ['O2TvSeries.Com', 'TvShows4Mobile.Com'].reverse();
+  let siteIndex = 0;
 
-  const filename = `${series} - S${seasonNum}E${episodeNum} (TvShows4Mobile.Com).${format}`;
-
-  const url = `http://d5.o2tvseries.com/${series}/${season}/${filename}`;
   let retryCount = -1;
 
   logger.info('Connecting to file server...');
@@ -320,40 +320,67 @@ function downloadEpisode({
     if (++retryCount)
       logger.info('Couldn\'t connect to the server. Retrying...');
 
-    return axios({
-        url,
-        method: 'GET',
-        responseType: 'stream'
-      })
+    const serverId = 2 + Math.floor(Math.random() * 6);
+    let filename;
+    if (format == 'HD')
+      filename = `${series} - S${seasonNum}E${episodeNum} HD (${sites[siteIndex]}).mp4`;
+    else
+      filename = `${series} - S${seasonNum}E${episodeNum} (${sites[siteIndex]}).${format}`;
+
+    const url = `http://d${serverId}.o2tvseries.com/${series}/${season}/${filename}`;  
+
+    if (++siteIndex >= sites.length)
+      siteIndex = 0;
+
+    return axios.get(url, { responseType: 'stream', adapter: httpAdapter })
       .then(({
         headers,
         data
       }) => {
-        logger.info(`Downloading ${chalk.whiteBright(filename)} --> ${path.resolve('.')}`);
-
-        let filesize = parseInt(headers['content-length'], 10);
-        console.log(filesize)
-
-        const writeStream = fs.createWriteStream(filename);
-        const bar = new ProgressBar('  downloading [:bar] :rate/bps :percent :etas', {
-          complete: '=',
-          incomplete: ' ',
-          width: 25,
-          total: filesize,
-          stream: process.sdout,
-          callback() {
-            logger.success('Download successful');
-            end();
-          }
+        console.log(url);
+        const size = parseInt(headers['content-length'], 10);
+        fs.exists(filename, exists => {
+          if (exists)
+            fs.unlink(filename, () => download(filename, data, size));
+          else 
+            download(filename, data, size);
         });
-
-        data.on('data', chunk => {
-          bar.tick(chunk.length);
-        });
-
-        data.pipe(writeStream);
       })
       .catch(connect);
+  }
+
+  function download(filename, stream, size) {
+    logger.info(`Downloading ${chalk.whiteBright(filename)} --> ${path.resolve('.')}`);
+    let barComplete = false;
+
+    const bar = new ProgressBar('  downloading [:bar] :rate/bps :percent :etas', {
+      complete: '=',
+      incomplete: ' ',
+      width: 25,
+      total: size,
+      stream: process.sdout,
+      callback() {
+        barComplete = true;
+      }
+    });
+
+    const output = fs.createWriteStream(filename);
+
+    stream.on('data', chunk => {
+      bar.tick(chunk.length);
+      output.write(Buffer.from(chunk));
+    });
+
+    stream.on('end', () => {
+      setTimeout(() => {
+        output.end();
+        console.log('');
+        logger.info('Connection to server has closed');
+        if (barComplete)
+          logger.success('Download successful');
+        end();
+      }, 1000);
+    });
   }
 
   function extractNum(string) {
