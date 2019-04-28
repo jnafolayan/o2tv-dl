@@ -13,6 +13,7 @@ const inquirer = require('inquirer');
 const chalk = require('chalk');
 const ProgressBar = require('progress');
 const scraper = require('./scraper');
+const fileCases = require('./fileCases');
 const routes = require('./routes');
 const logger = require('./logger');
 
@@ -23,7 +24,7 @@ const session = {
 const MAX_REQUESTS_RETRY = 5;
 
 program
-  .version('1.0.0', '-v, --version')
+  .version(require('./package.json').version, '-v, --version')
   .usage('[options] <series>')
   .description('search for movies with the specified tags')
   .option('-t, --timeout [timeout]', 'how long can a request take', 60)
@@ -95,21 +96,16 @@ function curl(url) {
   if (!requests[url]) requests[url] = 0;
   requests[url]++;
 
-  return new Promise((resolve, reject) => {
-    exec(`curl ${url} --connect-timeout ${session.timeout} --max-time 900`, (err, out) => {
-      if (err) {
-        if (requests[url] == MAX_REQUESTS_RETRY) {
-          end(1, 'An error occured due to network failure');
-        } else {
-          logger.info('Couldn\'t connect to the internet. Retrying...');
-          curl(url)
-            .then(resolve)
-            .catch(reject);
-        }
-      } else
-        resolve(out);
+  return axios.get(url)
+    .then(response => response.data)
+    .catch(err => {
+      if (requests[url] == MAX_REQUESTS_RETRY) {
+        end(1, 'An error occured due to network failure');
+      } else {
+        logger.info('Couldn\'t connect to the internet. Retrying...');
+        return curl(url);
+      }
     });
-  });
 }
 
 function fetchAllSeries() {
@@ -323,9 +319,17 @@ function downloadEpisode({
     const serverId = 2 + Math.floor(Math.random() * 6);
     let filename;
     if (format == 'HD')
-      filename = `${series} - S${seasonNum}E${episodeNum} HD (${sites[siteIndex]}).mp4`;
+      filename = `${series} - S${seasonNum}E${episodeNum} HD (${sites[siteIndex]})`;
     else
-      filename = `${series} - S${seasonNum}E${episodeNum} (${sites[siteIndex]}).${format}`;
+      filename = `${series} - S${seasonNum}E${episodeNum} (${sites[siteIndex]})`;
+
+    if (fileCases[series])
+      filename = fileCases[series](filename);
+
+    if (format == 'HD')
+      filename += '.mp4';
+    else
+      filename += `.${format}`;
 
     const url = `http://d${serverId}.o2tvseries.com/${series}/${season}/${filename}`;  
 
