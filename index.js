@@ -323,8 +323,8 @@ function downloadEpisode({
     else
       filename = `${series} - S${seasonNum}E${episodeNum} (${sites[siteIndex]})`;
 
-    if (fileCases[series])
-      filename = fileCases[series](filename);
+    if (fileCases[series.toLowerCase()])
+      filename = fileCases[series.toLowerCase()](filename);
 
     if (format == 'HD')
       filename += '.mp4';
