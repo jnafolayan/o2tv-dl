@@ -1,4 +1,4 @@
-node_modules 
+node_modules/ 
 analysis.md 
 results-cache.json
-yarn.lock 
+yarn.lock
