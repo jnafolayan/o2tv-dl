@@ -13,7 +13,7 @@ const inquirer = require('inquirer');
 const chalk = require('chalk');
 const ProgressBar = require('progress');
 const scraper = require('./scraper');
-const fileCases = require('./fileCases');
+const urlTransforms = require('./urlTransforms')
 const routes = require('./routes');
 const logger = require('./logger');
 
@@ -50,6 +50,7 @@ program
       .then(fetchEpisodesInfo)
       .then(requestUserEpisodeChoice)
       .then(downloadEpisode)
+      .then(requestContinue)
       .catch(err => {
         logger.error(`An error occured. Details:\n${err}`);
         end(1);
@@ -274,67 +275,79 @@ function requestUserEpisodeChoice(results) {
   const choices = results.map(series => series.text);
 
   return new Promise((resolve, reject) => {
-    inquirer.prompt([{
-        type: 'list',
-        name: 'episode',
-        message: `${results.length} episodes found. Pick one:`,
+    ask();
+
+    function ask() {
+      inquirer.prompt([{
+        type: 'checkbox',
+        name: 'episodes',
+        message: `${results.length} episodes found. Select the ones you wish to download:`,
         choices
       }])
-      .then(({
-        episode
-      }) => {
-        session.episode = episode;
-        resolve(results.find(s => s.text == episode));
+      .then(({ episodes }) => {
+        session.episodes = episodes;
+        if (episodes.length)
+          resolve(session);
+        else {
+          logger.error("You have to select at least 1 episode! Try again")
+          ask()
+        }
       });
+    }
   });
 }
 
-function downloadEpisode({
-  text,
-  link
-}) {
+function downloadEpisode() {
   const {
     series,
     season,
-    episode,
+    episodes,
     format
   } = session;
-
+  
+  const episode = episodes.shift();
   const seasonNum = extractNum(season);
   const episodeNum = extractNum(episode);
   const sites = ['O2TvSeries.Com', 'TvShows4Mobile.Com'].reverse();
-  let siteIndex = 0;
+  const urlsQueue = [];
 
-  let retryCount = -1;
+  let transformerIndex = 0;
+  let transformers = urlTransforms.map(func => {
+    return {
+      retryCount: -1,
+      transform: func
+    }
+  })
 
   logger.info('Connecting to file server...');
   logger.warn('It may take long to start the download. Quit the program whenever you feel like');
 
-  connect();
+  return connect();
 
   function connect(err) {
-    if (++retryCount)
+    let transformer = transformers[transformerIndex]
+
+    if (++transformer.retryCount == 7) {
+      transformer.retryCount = -1
+      if (++transformerIndex >= transformers.length) 
+        transformerIndex = 0
+      transformer = transformers[transformerIndex]
+      transformer.retryCount = 0;
+    }
+
+    if (transformer.retryCount > 0)
       logger.info('Couldn\'t connect to the server. Retrying...');
-
-    const serverId = 2 + Math.floor(Math.random() * 6);
-    let filename;
-    if (format == 'HD')
-      filename = `${series} - S${seasonNum}E${episodeNum} HD (${sites[siteIndex]})`;
-    else
-      filename = `${series} - S${seasonNum}E${episodeNum} (${sites[siteIndex]})`;
-
-    if (fileCases[series.toLowerCase()])
-      filename = fileCases[series.toLowerCase()](filename, { seasonNum, episodeNum });
-
-    if (format == 'HD')
-      filename += '.mp4';
-    else
-      filename += `.${format}`;
-
-    const url = `http://d${serverId}.o2tvseries.com/${series}/${season}/${filename}`;  
-
-    if (++siteIndex >= sites.length)
-      siteIndex = 0;
+    
+    const id = transformer.retryCount + 2
+    const urlObj1 = transformer.transform({ 
+      repo: sites[0], id, series, season, episode, seasonNum, episodeNum, format 
+    })
+    const urlObj2 = transformer.transform({ 
+      repo: sites[1], id, series, season, episode, seasonNum, episodeNum, format 
+    })
+    urlsQueue.push(urlObj1, urlObj2)
+  
+    const { url, filename } = urlsQueue.shift()
 
     return axios.get(url, { responseType: 'stream', adapter: httpAdapter })
       .then(({
@@ -342,18 +355,21 @@ function downloadEpisode({
         data
       }) => {
         console.log(url);
+        urlsQueue.length = 0
         const size = parseInt(headers['content-length'], 10);
-        fs.exists(filename, exists => {
-          if (exists)
-            fs.unlink(filename, () => download(filename, data, size));
-          else 
-            download(filename, data, size);
+        return new Promise((resolve, reject) => {
+          fs.exists(filename, exists => {
+            if (exists)
+              fs.unlink(filename, () => download(filename, data, size, resolve));
+            else 
+              download(filename, data, size, resolve);
+          });
         });
       })
       .catch(connect);
   }
 
-  function download(filename, stream, size) {
+  function download(filename, stream, size, cb) {
     logger.info(`Downloading ${chalk.whiteBright(filename)} --> ${path.resolve('.')}`);
     let barComplete = false;
 
@@ -378,16 +394,27 @@ function downloadEpisode({
     stream.on('end', () => {
       setTimeout(() => {
         output.end();
-        console.log('');
-        logger.info('Connection to server has closed');
         if (barComplete)
           logger.success('Download successful');
-        end();
+        cb()
       }, 1000);
     });
   }
 
   function extractNum(string) {
     return string.match(/(\d+)/g).shift();
+  }
+}
+
+function requestContinue() {
+  const { episodes } = session
+
+  console.log('')
+  
+  if (episodes.length)
+    return downloadEpisode()
+  else {
+    logger.info('Connection to server has closed');
+    end();
   }
 }
